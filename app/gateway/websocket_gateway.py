@@ -25,7 +25,6 @@ import socket
 
 app = FastAPI()
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=".*",
@@ -45,10 +44,8 @@ ws_manager = WebSocketManager()
 
 
 class LoginRequest(BaseModel):
-    username: str
+    email: str
     password: str
-    device_type: Optional[str] = 'unknown'
-    device_name: Optional[str] = 'unknown'
 
 
 @app.post("/login")
@@ -59,11 +56,11 @@ async def login(request: LoginRequest):
     kafka_message = {
         "request_id": request_id,
         "message": {
-            "action": "auth_user",
-            "username": request.username,
-            "password": request.password,
-            "device_type": request.device_type,
-            "device_name": request.device_name
+            "action": "login",
+            "data": {
+                "email": request.email,
+                "password": request.password
+            }
         }
     }
 
@@ -190,7 +187,6 @@ async def refresh_token(request: Request):
                     secure=False
                 )
 
-
                 response.status_code = 200
                 return response
             else:
@@ -242,14 +238,10 @@ async def refresh_token(request: Request):
 
 
 class RegisterRequest(BaseModel):
-    first_name: str
-    last_name: str
-    middle_name: str
     email: str
-    birth_date: str
+    full_name: str
     password: str
-    check_password: str
-    verification_code: str
+    role: str
 
 
 @app.post("/register")
@@ -261,17 +253,58 @@ async def register(request: RegisterRequest):
     kafka_message = {
         "request_id": request_id,
         "message": {
-            "action": "register",
-            "body": request.model_dump()
+            "action": "registration",
+            "data": request.model_dump()
         }
     }
+    print("Запрос на регистрацию отправлен в Kafka", kafka_message)
 
     try:
         event = asyncio.Event()
         await request_manager.add_request(request_id, event)
         produce_message(PRIMARY_CONFIG, "user_requests", kafka_message)
 
-        await asyncio.wait_for(event.wait(), timeout=10.0)
+        await asyncio.wait_for(event.wait(), timeout=40.0)
+
+        response_data = await request_manager.get_request(request_id)
+        if response_data:
+            return JSONResponse(content=response_data)
+
+        raise HTTPException(status_code=500, detail="Ошибка регистрации")
+    except asyncio.TimeoutError:
+        await request_manager.remove_request(request_id)
+        raise HTTPException(status_code=504, detail="Время ожидания ответа истекло")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке запроса в Kafka: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка при обработке запроса")
+
+
+class ConfirmRegisterRequest(BaseModel):
+    email: str
+    confirmation_code: str
+
+
+@app.post("/confirm-registration")
+async def register(request: ConfirmRegisterRequest):
+    """Эндпоинт для регистрации пользователя."""
+    print("Запрос на confirm получен")
+    request_id = str(uuid.uuid4())
+
+    kafka_message = {
+        "request_id": request_id,
+        "message": {
+            "action": "confirm_email",
+            "data": request.model_dump()
+        }
+    }
+    print("Запрос на регистрацию отправлен в Kafka", kafka_message)
+
+    try:
+        event = asyncio.Event()
+        await request_manager.add_request(request_id, event)
+        produce_message(PRIMARY_CONFIG, "user_requests", kafka_message)
+
+        await asyncio.wait_for(event.wait(), timeout=30.0)
 
         response_data = await request_manager.get_request(request_id)
         if response_data:
@@ -313,6 +346,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             topic_name = data.get("topic")
             message = data.get("message")
+            access_token = message.get("access_token")
 
             if not message or not isinstance(message, dict):
                 print(f"{now()} - Ошибка формата сообщения от пользователя {user_id}: {data}")
@@ -323,13 +357,22 @@ async def websocket_endpoint(websocket: WebSocket):
             request_id = data.get("request_id", str(uuid.uuid4()))
             kafka_message = {
                 "request_id": request_id,
-                "message": message
+                "message": {
+                    "action": "validate_token",
+                    "data": {
+                        "body": message.get("body", {}),
+                        "access_token": access_token,
+                        "target_topic": topic_name,
+                        "source": message.get("source"),
+                        "target_action": message.get("action"),
+                    }
+                }
             }
 
             try:
                 await request_manager.add_request(request_id, websocket)
                 print(f"{now()} - Зарегистрирован request_id {request_id} для пользователя {user_id}")
-                produce_message(PRIMARY_CONFIG, topic_name, kafka_message)
+                produce_message(PRIMARY_CONFIG, 'user_activity.token_validation', kafka_message)
             except Exception as kafka_error:
                 logger.error(f"{now()} - Ошибка отправки сообщения в Kafka для пользователя {user_id}: {kafka_error}")
                 await websocket.send_text(json.dumps({"error": f"Ошибка отправки в Kafka: {str(kafka_error)}"}))
