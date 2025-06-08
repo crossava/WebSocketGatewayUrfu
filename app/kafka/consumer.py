@@ -2,62 +2,72 @@ import asyncio
 import json
 from confluent_kafka import Consumer, KafkaError
 import logging
-from fastapi.responses import JSONResponse
-from fastapi import Cookie, Response
+
+from starlette.websockets import WebSocket
 
 from app.gateway.websocket_gateway import ws_manager
-from app.gateway.websocket_manager import WebSocketManager
+from app.gateway.request_manager import RequestManager
 
 logger = logging.getLogger("kafka")
 logger.setLevel(logging.ERROR)
 
 
-async def handle_response(message, request_manager):
+async def handle_response(message, request_manager: RequestManager):
     """Обработка сообщений из Kafka."""
     try:
-        raw_message = message.value()
-
-        # Проверяем, что сообщение не None и не пустая строка
-        if not raw_message:
-            logger.error("Получено пустое сообщение из Kafka")
-            return
-
-        raw_message = raw_message.decode("utf-8").strip()
-
-        if not raw_message:
-            logger.error("Сообщение после декодирования пустое")
-            return
-
-        # Преобразуем в JSON
+        raw_message = message.value().decode("utf-8")
         response = json.loads(raw_message)
+
+        if response.get("only_forward"):
+            forward_to = response.get("forward_to")
+            if forward_to:
+                if isinstance(forward_to, str):
+                    await ws_manager.send_message(forward_to, response)
+                elif isinstance(forward_to, list):
+                    for target_user_id in forward_to:
+                        await ws_manager.send_message(target_user_id, response)
+            return
 
         request_id = response.get("request_id")
         if not request_id:
-            logger.error("Ошибка: request_id отсутствует в сообщении")
             return
 
-        to_user_id = response.get("to_user_id")
-        if to_user_id:
-            await ws_manager.send_message(to_user_id, response)  # ✅ Отправляем WebSocket
+        request_obj = await request_manager.get_request(request_id)
+        if not request_obj:
+            return
 
-        print("response", response)
-        event = await request_manager.get_request(request_id)
-        if isinstance(event, asyncio.Event):
+        if isinstance(request_obj, WebSocket):
+            user_id = None
+            for (uid), ws in ws_manager.active_connections.items():
+                if ws == request_obj:
+                    user_id = uid
+                    break
+
+            if not user_id:
+                return
+
+            await ws_manager.send_message(user_id, response)
+
+            forward_to = response.get("forward_to")
+            if forward_to:
+                if isinstance(forward_to, str):
+                    await ws_manager.send_message(forward_to, response)
+                elif isinstance(forward_to, list):
+                    for target_user_id in forward_to:
+                        await ws_manager.send_message(target_user_id, response)
+
+            await request_manager.remove_request(request_id)
+
+        elif isinstance(request_obj, asyncio.Event):
             await request_manager.add_request(request_id, response)  # Сохраняем ответ
-            event.set()  # Разблокируем login()
-        else:
-            websocket = event
-            if websocket:
-                await websocket.send_json(response)
-                await request_manager.remove_request(request_id)
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка JSON-декодирования: {e}, raw_message={raw_message}")
+            request_obj.set()
+
     except Exception as e:
         logger.error(f"Ошибка обработки Kafka сообщения: {e}")
+        print(f"Ошибка обработки Kafka сообщения: {e}")
 
 
-def consume_responses(config, topics, request_manager):
-    """Чтение ответов из Kafka."""
+def consume_responses(config, topics, request_manager: RequestManager):
     consumer = Consumer(config)
     consumer.subscribe(topics)
 
@@ -71,10 +81,11 @@ def consume_responses(config, topics, request_manager):
             if msg.error().code() == KafkaError._PARTITION_EOF:
                 continue
             else:
-                print(f"Ошибка консюмера: {msg.error()}")
+                print(f"❌ Ошибка консюмера: {msg.error()}")
                 continue
 
         try:
+            print("📩 msg: ", msg)
             asyncio.run(handle_response(msg, request_manager))
         except Exception as e:
-            print(f"Ошибка обработки сообщения: {e}")
+            print(f"❌ Ошибка обработки сообщения: {e}")
