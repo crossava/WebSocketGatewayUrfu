@@ -8,9 +8,9 @@ from app.gateway.websocket_gateway import websocket_endpoint
 from app.gateway.api_routes import router as api_router
 
 from app.gateway.websocket_gateway import request_manager, ws_manager
-from app.online_status.online_status import online_status_manager
 from app.kafka.consumer import consume_responses
 from app.kafka.config import CONSUMER_CONFIG
+from app.registry import online_status_manager
 
 # Создаем приложение FastAPI
 app = FastAPI()
@@ -18,7 +18,13 @@ app = FastAPI()
 # Добавляем middleware CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080"],
+    allow_origins=[
+        "http://localhost:8080",
+        "https://kindness-event.ru/",
+        "http://212.113.117.163",
+        "http://212.113.117.163:80",
+        "http://192.168.0.103:8080"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -13,6 +13,12 @@ import asyncio
 from app.kafka.config import PRIMARY_CONFIG
 from app.kafka.producer import produce_message
 
+import boto3
+from botocore.client import Config
+from werkzeug.utils import secure_filename
+from fastapi import APIRouter, Request, Form, File, UploadFile
+from typing import List
+
 router = APIRouter()
 logger = logging.getLogger("api_routes")
 
@@ -56,9 +62,8 @@ async def login(request: LoginRequest):
                 print(f"❌ response_body пустой, response_data: {response_data}")
                 raise HTTPException(status_code=500, detail="Ошибка в ответе Kafka")
 
-            print("access_token", response_body.get("access_token"))
-            access_token = response_body.get("access_token")
-            refresh_token = response_body.get("refresh_token")
+            access_token = response_body.pop("access_token")
+            refresh_token = response_body.pop("refresh_token")
             user_id = response_body.get("user_id")
 
             if access_token and refresh_token:
@@ -67,22 +72,22 @@ async def login(request: LoginRequest):
                     key="access_token",
                     value=str(access_token),
                     httponly=True,
-                    samesite='Lax',  # ✅ заменить None на Lax
-                    secure=False
+                    samesite='None',
+                    secure=True
                 )
                 response.set_cookie(
                     key="refresh_token",
                     value=str(refresh_token),
                     httponly=True,
-                    samesite='Lax',
-                    secure=False
+                    samesite='None',
+                    secure=True
                 )
                 response.set_cookie(
                     key="user_id",
                     value=str(user_id),
                     httponly=True,
-                    samesite='Lax',
-                    secure=False
+                    samesite='None',
+                    secure=True
                 )
                 response.status_code = 200
                 return response
@@ -257,12 +262,6 @@ async def register(request: ConfirmRegisterRequest):
         logger.error(f"Ошибка при отправке запроса в Kafka: {e}")
         raise HTTPException(status_code=500, detail="Ошибка при обработке запроса")
 
-
-import boto3
-from botocore.client import Config
-from werkzeug.utils import secure_filename
-from fastapi import APIRouter, Request, Form, File, UploadFile
-from typing import List
 
 s3 = boto3.client(
     "s3",

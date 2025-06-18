@@ -2,7 +2,6 @@ import os
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from starlette.middleware.cors import CORSMiddleware
 
 from app.gateway.request_manager import RequestManager
 from app.gateway.websocket_manager import WebSocketManager
@@ -12,6 +11,8 @@ import uuid
 import logging
 
 import json
+
+from app.registry import online_status_manager
 
 logger = logging.getLogger("kafka")
 logger.setLevel(logging.ERROR)
@@ -28,29 +29,36 @@ async def websocket_endpoint(websocket: WebSocket):
     access_token = cookies_dict.get("access_token")
     user_id = cookies_dict.get("user_id")
 
-    print("access_token", access_token)
+    # Подключение разрешено даже без access_token и user_id
+    print(f"{now()} - Пользователь {'анонимный' if not user_id else user_id} подключился к WebSocket.")
+    await ws_manager.connect(websocket, user_id or "anonymous")
 
-    if not access_token or not user_id:
-        print(f"{now()} - Ошибка: соединение WebSocket отклонено. Отсутствует access_token или user_id.")
-        await websocket.close(code=1008)
-        return
-
-    print(f"{now()} - Пользователь {user_id} успешно подключился. access_token:")
-    await ws_manager.connect(websocket, user_id)
     try:
         while True:
             data = await websocket.receive_json()
-            print(f"{now()} - Получено сообщение от пользователя {user_id}: {data}")
+            print(f"{now()} - Получено сообщение от пользователя {'анонимный' if not user_id else user_id}: {data}")
 
-            print("data", data)
             topic_name = data.get("topic")
             message = data.get("message")
 
             if not message or not isinstance(message, dict):
-                print(f"{now()} - Ошибка формата сообщения от пользователя {user_id}: {data}")
+                print(f"{now()} - Ошибка формата сообщения: {data}")
                 await websocket.send_text(json.dumps(
-                    {"request_id": str(uuid.uuid4()), "status": "error", "message": "Неверный формат сообщения"}))
+                    {"request_id": str(uuid.uuid4()), "status": "error", "message": "Неверный формат сообщения"}
+                ))
                 continue
+
+            # Проверка действия
+            action = message.get("action")
+
+            # Разрешено только get_upcoming_events для неавторизованных пользователей
+            if not user_id or not access_token:
+                if action != "get_upcoming_events":
+                    print(f"{now()} - Ошибка: действие '{action}' требует авторизации (user_id и access_token).")
+                    await websocket.send_text(json.dumps(
+                        {"request_id": str(uuid.uuid4()), "status": "error", "message": "Требуется авторизация"}
+                    ))
+                    continue
 
             request_id = data.get("request_id", str(uuid.uuid4()))
             kafka_message = {
@@ -60,22 +68,22 @@ async def websocket_endpoint(websocket: WebSocket):
 
             try:
                 await request_manager.add_request(request_id, websocket)
-                print(f"{now()} - Зарегистрирован request_id {request_id} для пользователя {user_id}")
+                print(f"{now()} - Зарегистрирован request_id {request_id} для пользователя {'анонимный' if not user_id else user_id}")
                 produce_message(PRIMARY_CONFIG, topic_name, kafka_message)
             except Exception as kafka_error:
-                logger.error(f"{now()} - Ошибка отправки сообщения в Kafka для пользователя {user_id}: {kafka_error}")
+                logger.error(f"{now()} - Ошибка отправки сообщения в Kafka: {kafka_error}")
                 await websocket.send_text(json.dumps({"error": f"Ошибка отправки в Kafka: {str(kafka_error)}"}))
 
     except WebSocketDisconnect as e:
         code = getattr(e, "code", "нет кода")
         reason = getattr(e, "reason", "нет причины")
-        print(f"{now()} - Пользователь {user_id} отключился от WebSocket. Код: {code}. Причина: {reason}")
-        await ws_manager.disconnect(user_id)
+        print(f"{now()} - Пользователь {'анонимный' if not user_id else user_id} отключился от WebSocket. Код: {code}. Причина: {reason}")
+        await ws_manager.disconnect(user_id or "anonymous")
 
     except Exception as e:
-        logger.error(f"{now()} - Общая ошибка WebSocket для пользователя {user_id}: {e}")
+        logger.error(f"{now()} - Общая ошибка WebSocket для пользователя {'анонимный' if not user_id else user_id}: {e}")
         try:
             await websocket.send_text(json.dumps({"error": str(e)}))
         except Exception as send_error:
-            print(f"{now()} - Ошибка при отправке сообщения об ошибке пользователю {user_id}: {send_error}")
-        logger.error(f"{now()} - Общая ошибка WebSocket для пользователя {user_id}: {e}")
+            print(f"{now()} - Ошибка при отправке сообщения об ошибке: {send_error}")
+        logger.error(f"{now()} - Общая ошибка WebSocket: {e}")

@@ -7,6 +7,7 @@ from starlette.websockets import WebSocket
 
 from app.gateway.websocket_gateway import ws_manager
 from app.gateway.request_manager import RequestManager
+from app.registry import online_status_manager
 
 logger = logging.getLogger("kafka")
 logger.setLevel(logging.ERROR)
@@ -20,12 +21,15 @@ async def handle_response(message, request_manager: RequestManager):
 
         if response.get("only_forward"):
             forward_to = response.get("forward_to")
-            if forward_to:
-                if isinstance(forward_to, str):
-                    await ws_manager.send_message(forward_to, response)
-                elif isinstance(forward_to, list):
-                    for target_user_id in forward_to:
-                        await ws_manager.send_message(target_user_id, response)
+            if forward_to == "online_status":
+                for user_id, websocket in ws_manager.active_connections.items():
+                    await ws_manager.send_message(user_id, response)
+
+            elif isinstance(forward_to, str):
+                await ws_manager.send_message(forward_to, response)
+            elif isinstance(forward_to, list):
+                for target_user_id in forward_to:
+                    await ws_manager.send_message(target_user_id, response)
             return
 
         request_id = response.get("request_id")
@@ -50,6 +54,7 @@ async def handle_response(message, request_manager: RequestManager):
 
             forward_to = response.get("forward_to")
             if forward_to:
+                print("CHECKED FORWARD", forward_to)
                 if isinstance(forward_to, str):
                     await ws_manager.send_message(forward_to, response)
                 elif isinstance(forward_to, list):

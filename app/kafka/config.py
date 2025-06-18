@@ -1,6 +1,6 @@
 import uuid
 
-BROKERS = "77.232.135.48:9092,77.232.135.48:9094"
+BROKERS = "212.113.117.163:9092,212.113.117.163:9094"
 
 PRIMARY_CONFIG = {
     "bootstrap.servers": BROKERS,
@@ -9,7 +9,7 @@ PRIMARY_CONFIG = {
 CONSUMER_CONFIG = {
     "bootstrap.servers": BROKERS,
     "group.id": "websocketGateway_" + str(uuid.uuid4()),
-    "auto.offset.reset": "earliest",
+    "auto.offset.reset": "latest",
     "enable.auto.commit": True,
     "session.timeout.ms": 10000,
 }
