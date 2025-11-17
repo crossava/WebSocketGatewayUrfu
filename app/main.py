@@ -20,6 +20,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8080",
+        "http://localhost:3000",
         "https://kindness-event.ru/",
         "http://212.113.117.163",
         "http://212.113.117.163:80",
@@ -40,7 +41,7 @@ app.websocket("/ws")(websocket_endpoint)
 def start_consumer():
     """Запускает Kafka-консьюмер в отдельном потоке."""
     array_responses = [
-        'user_responses', 'event_responses'
+        'user_responses', 'identity_responses'
     ]
     consume_responses(CONSUMER_CONFIG, array_responses, request_manager)
 
@@ -55,5 +56,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=4000,
+        port=8000,
     )

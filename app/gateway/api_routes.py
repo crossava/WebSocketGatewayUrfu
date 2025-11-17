@@ -35,19 +35,17 @@ async def login(request: LoginRequest):
     request_id = str(uuid.uuid4())
     kafka_message = {
         "request_id": request_id,
-        "message": {
-            "action": "login",
-            "data": {
-                "email": request.email,
-                "password": request.password
-            }
+        "action": "login",
+        "payload": {
+            "email": request.email,
+            "password": request.password
         }
     }
 
     try:
         event = asyncio.Event()
         await request_manager.add_request(request_id, event)
-        produce_message(PRIMARY_CONFIG, "user_requests", kafka_message)
+        produce_message(PRIMARY_CONFIG, "identity_requests", kafka_message)
 
         await asyncio.wait_for(event.wait(), timeout=30)
 
@@ -56,17 +54,16 @@ async def login(request: LoginRequest):
         print(f"📩 response_data: {response_data}")
 
         if response_data:
-            response_body = response_data.get("message", {}).get("body", {})
+            response_body = response_data.get("body", {})
 
             if not response_body:
                 print(f"❌ response_body пустой, response_data: {response_data}")
                 raise HTTPException(status_code=500, detail="Ошибка в ответе Kafka")
 
-            access_token = response_body.pop("access_token")
-            refresh_token = response_body.pop("refresh_token")
-            user_id = response_body.get("user_id")
+            access_token = response_body.pop("token")
+            user_id = response_body.get("user").get("_id")
 
-            if access_token and refresh_token:
+            if access_token:
                 response = JSONResponse(content=response_data)
                 response.set_cookie(
                     key="access_token",
@@ -183,9 +180,6 @@ class RegisterRequest(BaseModel):
     email: str
     full_name: str
     password: str
-    role: str
-    phone: str
-    address: str
 
 
 @router.post("/register")
@@ -196,9 +190,14 @@ async def register(request: RegisterRequest):
 
     kafka_message = {
         "request_id": request_id,
-        "message": {
-            "action": "registration",
-            "data": request.model_dump()
+        "action": "create_user",
+        "payload": {
+            "email": request.email,
+            "full_name": request.full_name,
+            "password": "123123123",
+            "role": "barista",
+            "coffee_shop_id": "cs1",
+            "phone": "+79998887766"
         }
     }
     print("Запрос на регистрацию отправлен в Kafka", kafka_message)
@@ -206,9 +205,9 @@ async def register(request: RegisterRequest):
     try:
         event = asyncio.Event()
         await request_manager.add_request(request_id, event)
-        produce_message(PRIMARY_CONFIG, "user_requests", kafka_message)
+        produce_message(PRIMARY_CONFIG, "identity_requests", kafka_message)
 
-        await asyncio.wait_for(event.wait(), timeout=40.0)
+        await asyncio.wait_for(event.wait(), timeout=15)
 
         response_data = await request_manager.get_request(request_id)
         if response_data:

@@ -1,6 +1,6 @@
 import uuid
 
-BROKERS = "212.113.117.163:9092,212.113.117.163:9094"
+BROKERS = "localhost:9092"
 
 PRIMARY_CONFIG = {
     "bootstrap.servers": BROKERS,
