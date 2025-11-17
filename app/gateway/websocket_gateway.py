@@ -39,17 +39,17 @@ async def websocket_endpoint(websocket: WebSocket):
             print(f"{now()} - Получено сообщение от пользователя {'анонимный' if not user_id else user_id}: {data}")
 
             topic_name = data.get("topic")
-            message = data.get("message")
+            action = data.get("action")
+            payload = data.get("payload")
 
-            if not message or not isinstance(message, dict):
-                print(f"{now()} - Ошибка формата сообщения: {data}")
-                await websocket.send_text(json.dumps(
-                    {"request_id": str(uuid.uuid4()), "status": "error", "message": "Неверный формат сообщения"}
-                ))
-                continue
+            # if not message or not isinstance(message, dict):
+            #     print(f"{now()} - Ошибка формата сообщения: {data}")
+            #     await websocket.send_text(json.dumps(
+            #         {"request_id": str(uuid.uuid4()), "status": "error", "message": "Неверный формат сообщения"}
+            #     ))
+            #     continue
 
             # Проверка действия
-            action = message.get("action")
 
             # Разрешено только get_upcoming_events для неавторизованных пользователей
             if not user_id or not access_token:
@@ -63,7 +63,8 @@ async def websocket_endpoint(websocket: WebSocket):
             request_id = data.get("request_id", str(uuid.uuid4()))
             kafka_message = {
                 "request_id": request_id,
-                "message": message
+                "action": action,
+                "payload": payload
             }
 
             try:

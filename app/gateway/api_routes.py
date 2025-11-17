@@ -194,10 +194,7 @@ async def register(request: RegisterRequest):
         "payload": {
             "email": request.email,
             "full_name": request.full_name,
-            "password": "123123123",
-            "role": "barista",
-            "coffee_shop_id": "cs1",
-            "phone": "+79998887766"
+            "password": request.password,
         }
     }
     print("Запрос на регистрацию отправлен в Kafka", kafka_message)
