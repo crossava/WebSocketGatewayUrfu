@@ -70,21 +70,21 @@ async def login(request: LoginRequest):
                     value=str(access_token),
                     httponly=True,
                     samesite='None',
-                    secure=True
+                    secure=False
                 )
                 response.set_cookie(
                     key="refresh_token",
                     value=str(refresh_token),
                     httponly=True,
                     samesite='None',
-                    secure=True
+                    secure=False
                 )
                 response.set_cookie(
                     key="user_id",
                     value=str(user_id),
                     httponly=True,
                     samesite='None',
-                    secure=True
+                    secure=False
                 )
                 response.status_code = 200
                 return response
@@ -175,6 +175,88 @@ async def refresh_token(request: Request):
         logger.error(f"Ошибка при отправке запроса в Kafka: {e}")
         raise HTTPException(status_code=500, detail="Ошибка при обработке запроса")
 
+
+@router.get("/me")
+async def me(request: Request):
+    """Проверка авторизации по access_token из cookie"""
+
+    access_token = request.cookies.get("access_token")
+    print("access token----------------: ", access_token)
+
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    request_id = str(uuid.uuid4())
+
+    kafka_message = {
+        "request_id": request_id,
+        "action": "me",
+        "payload": {
+            "token": access_token
+        }
+    }
+
+    try:
+        # prepare waiter
+        event = asyncio.Event()
+        await request_manager.add_request(request_id, event)
+
+        # send to Kafka
+        produce_message(PRIMARY_CONFIG, "identity_requests", kafka_message)
+
+        # wait for response
+        await asyncio.wait_for(event.wait(), timeout=30)
+
+        response_data = await request_manager.get_request(request_id)
+
+        if not response_data:
+            raise HTTPException(status_code=500, detail="Invalid Kafka response")
+
+        if response_data.get("status") != "success":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        user = response_data.get("body", {})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return {"user": user}
+
+    except asyncio.TimeoutError:
+        await request_manager.remove_request(request_id)
+        raise HTTPException(status_code=504, detail="Timeout waiting for Kafka response")
+
+    except Exception as e:
+        logger.error(f"Error in /auth/me: {e}")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@router.post("/logout")
+async def logout():
+    """Выход из системы — просто очищаем куки."""
+
+    response = JSONResponse({"status": "success"})
+
+    # Удаляем токены
+    response.delete_cookie(
+        key="access_token",
+        httponly=True,
+        samesite="None",
+        secure=False
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        httponly=True,
+        samesite="None",
+        secure=False
+    )
+    response.delete_cookie(
+        key="user_id",
+        httponly=True,
+        samesite="None",
+        secure=False
+    )
+
+    return response
 
 class RegisterRequest(BaseModel):
     email: str

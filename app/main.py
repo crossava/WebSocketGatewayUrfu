@@ -41,7 +41,7 @@ app.websocket("/ws")(websocket_endpoint)
 def start_consumer():
     """Запускает Kafka-консьюмер в отдельном потоке."""
     array_responses = [
-        'user_responses', 'identity_responses'
+        'user_responses', 'identity_responses', "scheduling_responses"
     ]
     consume_responses(CONSUMER_CONFIG, array_responses, request_manager)
 
