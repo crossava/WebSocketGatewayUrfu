@@ -1,5 +1,7 @@
 import asyncio
 import json
+from pprint import pprint
+
 from confluent_kafka import Consumer, KafkaError
 import logging
 
@@ -18,6 +20,14 @@ async def handle_response(message, request_manager: RequestManager):
     try:
         raw_message = message.value().decode("utf-8")
         response = json.loads(raw_message)
+
+        print("ПРИШЕЛ ЗАПРОС")
+        pprint(response)
+
+        if response.get("telegram_connected"):
+            user_id = response.get("user_id")
+            message = response.get("message")
+            await ws_manager.send_message(user_id, response)
 
         if response.get("only_forward"):
             forward_to = response.get("forward_to")
